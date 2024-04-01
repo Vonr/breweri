@@ -36,17 +36,9 @@ mod message;
 mod mode;
 mod shown;
 
-#[cfg(feature = "dhat")]
-#[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
-
 #[tokio::main]
 async fn main() -> Result<(), io::Error> {
-    #[cfg(feature = "dhat")]
-    let _profiler = dhat::Profiler::new_heap();
-
     let args = Config::new(env::args());
-    let command = args.command;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -86,7 +78,6 @@ async fn main() -> Result<(), io::Error> {
         let shown = shown.clone();
         let error_msg = error_msg.clone();
         let redraw = redraw.clone();
-        let command = command.clone();
         let all_packages = all_packages.clone();
         let installed = installed.clone();
 
@@ -100,7 +91,7 @@ async fn main() -> Result<(), io::Error> {
             redraw.store(true, Ordering::SeqCst);
 
             if all_packages.get().is_none() {
-                let result = list(command != "pacman").await;
+                let result = list().await;
                 all_packages.get_or_init(|| result);
             }
 
@@ -161,7 +152,6 @@ async fn main() -> Result<(), io::Error> {
 
             if info.lock().is_empty() && !(*shown).load().is_empty() {
                 let shown = shown.clone();
-                let command = command.clone();
                 let redraw = redraw.clone();
                 let info = info.clone();
                 let installed = installed.clone();
@@ -175,7 +165,6 @@ async fn main() -> Result<(), io::Error> {
                         all_packages.get().unwrap(),
                         real_idx,
                         installed.get().unwrap(),
-                        &command,
                     )
                     .await;
                     *info.lock() = newinfo;
@@ -212,7 +201,7 @@ async fn main() -> Result<(), io::Error> {
                 ]))
                 .block(
                     Block::default()
-                        .title(Span::styled(" parui ", bold_search_style))
+                        .title(Span::styled(" breweri ", bold_search_style))
                         .title_alignment(Alignment::Center)
                         .border_style(Style::default().fg(search_color))
                         .borders(Borders::ALL)
@@ -448,7 +437,6 @@ async fn main() -> Result<(), io::Error> {
                     let error_msg = error_msg.clone();
                     let redraw = redraw.clone();
                     let query = query.clone();
-                    let command = command.clone();
                     let all_packages = all_packages.clone();
                     let installed = installed.clone();
                     if let Some(search_thread) = _search_task {
@@ -458,7 +446,7 @@ async fn main() -> Result<(), io::Error> {
                         error_msg.store(Message::Searching, Ordering::SeqCst);
 
                         if all_packages.get().is_none() {
-                            let result = list(command != "pacman").await;
+                            let result = list().await;
                             all_packages.get_or_init(|| result);
                         }
 
@@ -594,34 +582,34 @@ async fn main() -> Result<(), io::Error> {
                         return Ok(());
                     }
                     'R' => {
-                        if installed.get().unwrap().contains(&current) {
-                            let mut has_any = false;
-                            let mut cmd = std::process::Command::new(&command);
-                            cmd.arg("-R");
-                            if selected.is_empty() {
-                                cmd.arg(&(all_packages.get().unwrap()[real_idx(current)]));
-                                has_any = true;
-                            } else {
-                                for i in selected.iter() {
-                                    if installed.get().unwrap().contains(i) {
-                                        cmd.arg(&(all_packages.get().unwrap()[*i]));
-                                        has_any = true;
-                                    }
+                        let mut has_any = false;
+                        let mut cmd = std::process::Command::new("brew");
+                        cmd.arg("remove");
+                        if selected.is_empty()
+                            && installed.get().unwrap().contains(&real_idx(current))
+                        {
+                            cmd.arg(&(all_packages.get().unwrap()[real_idx(current)]));
+                            has_any = true;
+                        } else {
+                            for i in selected.iter() {
+                                if installed.get().unwrap().contains(i) {
+                                    cmd.arg(&(all_packages.get().unwrap()[*i]));
+                                    has_any = true;
                                 }
                             }
-
-                            if !has_any {
-                                continue;
-                            }
-
-                            disable_raw_mode()?;
-                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                            terminal.show_cursor()?;
-
-                            cmd.exec();
-
-                            return Ok(());
                         }
+
+                        if !has_any {
+                            continue;
+                        }
+
+                        disable_raw_mode()?;
+                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                        terminal.show_cursor()?;
+
+                        cmd.exec();
+
+                        return Ok(());
                     }
 
                     _ => redraw.store(true, Ordering::SeqCst),
@@ -635,8 +623,8 @@ async fn main() -> Result<(), io::Error> {
                         search_thread.abort();
                     }
 
-                    let mut cmd = std::process::Command::new(command);
-                    cmd.arg("-S");
+                    let mut cmd = std::process::Command::new("brew");
+                    cmd.arg("reinstall");
                     if selected.is_empty() {
                         cmd.arg(&(all_packages.get().unwrap()[real_idx(current)]));
                     } else {

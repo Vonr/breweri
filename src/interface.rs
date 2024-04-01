@@ -1,10 +1,4 @@
-use std::{
-    borrow::Cow,
-    collections::HashSet,
-    io::{BufRead, BufReader},
-    sync::Arc,
-    time::Duration,
-};
+use std::{borrow::Cow, collections::HashSet, process::Stdio, sync::Arc, time::Duration};
 
 use arc_swap::ArcSwap;
 use compact_strings::CompactStrings;
@@ -17,40 +11,60 @@ use tui::{
 
 use crate::shown::Shown;
 
-pub async fn list(show_aur: bool) -> &'static mut CompactStrings {
-    let mut cmd = Command::new("pacman");
-    cmd.arg("-Slq");
-
-    let pacman_out = cmd.output();
-    let aur_out = tokio::task::spawn_blocking(move || {
-        if show_aur {
-            ureq::get("https://aur.archlinux.org/packages.gz")
-                .call()
-                .ok()
-        } else {
-            None
-        }
-    });
-
-    let (pacman_out, aur_out) = join!(pacman_out, aur_out);
+pub async fn list() -> &'static mut CompactStrings {
+    let formulae = Command::new("curl")
+        .arg("-s")
+        .arg("https://formulae.brew.sh/api/formula.json")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let formulae_jq = Command::new("jq")
+        .arg("-r")
+        .arg(".[]|.name")
+        .stdin(Stdio::from(
+            formulae.stdout.unwrap().into_owned_fd().unwrap(),
+        ))
+        .stdout(Stdio::piped())
+        .spawn();
+    let casks = Command::new("curl")
+        .arg("-s")
+        .arg("https://formulae.brew.sh/api/cask.json")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let casks_jq = Command::new("jq")
+        .arg("-r")
+        .arg(".[]|.full_token")
+        .stdin(Stdio::from(casks.stdout.unwrap().into_owned_fd().unwrap()))
+        .stdout(Stdio::piped())
+        .spawn();
 
     let out = Box::leak(Box::new(CompactStrings::with_capacity(16 * 16384, 16384)));
 
-    let Ok(pacman_out) = pacman_out else {
+    let Ok(formulae_jq) = formulae_jq else {
         return out;
     };
 
-    let Ok(aur_out) = aur_out else {
+    let Ok(casks_jq) = casks_jq else {
         return out;
     };
 
-    out.clear();
+    let (formulae, casks) = join!(formulae_jq.wait_with_output(), casks_jq.wait_with_output());
+
+    let Ok(formulae) = formulae else {
+        return out;
+    };
+
+    let Ok(casks) = casks else {
+        return out;
+    };
 
     let mut buf = Vec::with_capacity(128);
-    let mut push_byte = |byte| {
+
+    for byte in formulae.stdout.into_iter().chain(casks.stdout.into_iter()) {
         if byte != b'\n' {
             buf.push(byte);
-            return;
+            continue;
         }
 
         if let Ok(s) = std::str::from_utf8(&buf) {
@@ -58,14 +72,6 @@ pub async fn list(show_aur: bool) -> &'static mut CompactStrings {
         }
 
         buf.clear();
-    };
-
-    pacman_out.stdout.into_iter().for_each(&mut push_byte);
-    if let Some(aur_out) = aur_out {
-        let mut buf = Vec::with_capacity(16 * 16384);
-
-        aur_out.into_reader().read_to_end(&mut buf).unwrap();
-        buf.into_iter().for_each(&mut push_byte)
     }
 
     out.shrink_to_fit();
@@ -217,22 +223,18 @@ pub async fn get_info<'line>(
     all_packages: &CompactStrings,
     index: usize,
     installed_cache: &IntSet<usize>,
-    command: &str,
 ) -> Vec<Line<'line>> {
     if index >= all_packages.len() {
         return Vec::new();
     }
 
-    let mut cmd = Command::new(command);
+    let mut cmd = Command::new("brew");
 
-    if installed_cache.contains(&index) {
-        cmd.arg("-Qi");
-    } else {
+    if !installed_cache.contains(&index) {
         // Debounce so that we don't spam requests
         sleep(Duration::from_millis(200)).await;
-
-        cmd.arg("-Si");
     };
+    cmd.arg("info");
 
     cmd.arg(&all_packages[index]);
 
@@ -267,16 +269,19 @@ pub async fn get_info<'line>(
 }
 
 pub async fn check_installed(packages: &CompactStrings) -> IntSet<usize> {
-    const PATH: &str = "/var/lib/pacman/local";
-    const DESC: &str = "desc";
+    const FORMULAE_PATH: &str = "/usr/local/Cellar";
+    const CASKS_PATH: &str = "/usr/local/Caskroom";
 
     let mut out = IntSet::default();
-    let Ok(dir) = std::fs::read_dir(PATH) else {
+    let Ok(formulae) = std::fs::read_dir(FORMULAE_PATH) else {
+        return out;
+    };
+    let Ok(casks) = std::fs::read_dir(CASKS_PATH) else {
         return out;
     };
 
     let mut set = HashSet::new();
-    for entry in dir.filter_map(Result::ok) {
+    for entry in formulae.chain(casks).filter_map(Result::ok) {
         let Ok(ft) = entry.file_type() else {
             continue;
         };
@@ -285,16 +290,7 @@ pub async fn check_installed(packages: &CompactStrings) -> IntSet<usize> {
             continue;
         }
 
-        let path = entry.path().join(DESC);
-        let Ok(file) = std::fs::File::open(path) else {
-            continue;
-        };
-
-        let Some(Ok(name)) = BufReader::new(file).lines().nth(1) else {
-            continue;
-        };
-
-        set.insert(name);
+        set.insert(entry.file_name().into_string().unwrap());
     }
 
     for (pos, _) in packages

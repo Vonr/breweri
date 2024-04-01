@@ -2,17 +2,14 @@ use std::process::exit;
 
 pub fn print_help() {
     println!(
-        r#"Usage: parui [OPTION]... QUERY
-Search for QUERY in the Arch User Repository.
+        r#"Usage: breweri [OPTION]... QUERY
+Search for QUERY in Homebrew repositories,
 Example:
-    parui -p=yay rustup\n
+   breweri rustup
+
 Options:
-    -p=<PROGRAM>
-        Selects program used to search AUR
-        Not guaranteed to work well
-        Default: paru
-    -h
-        Print this help and exit
+   -h
+       Print this help and exit
 Keybinds:
     Both:
        <Escape>
@@ -52,7 +49,7 @@ Keybinds:
        <S-R>
            Remove selected packages
        q
-           Exit parui"#
+           Exit breweri"#
     );
     exit(0);
 }
