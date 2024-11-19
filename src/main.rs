@@ -83,12 +83,12 @@ async fn main() -> Result<(), io::Error> {
 
         _search_task = Some(tokio::spawn(async move {
             if query.is_empty() {
-                error_msg.store(Message::ListingPackages, Ordering::SeqCst);
+                error_msg.store(Message::ListingPackages, Ordering::Relaxed);
             } else {
-                error_msg.store(Message::Searching, Ordering::SeqCst);
+                error_msg.store(Message::Searching, Ordering::Relaxed);
             }
 
-            redraw.store(true, Ordering::SeqCst);
+            redraw.store(true, Ordering::Relaxed);
 
             if all_packages.get().is_none() {
                 let result = list().await;
@@ -103,11 +103,11 @@ async fn main() -> Result<(), io::Error> {
             shown.store(search(&query, all_packages.get().unwrap()).into());
 
             if !(*shown).load().is_empty() {
-                mode.store(Mode::Select, Ordering::SeqCst);
+                mode.store(Mode::Select, Ordering::Relaxed);
             } else {
-                error_msg.store(Message::NoResults, Ordering::SeqCst);
+                error_msg.store(Message::NoResults, Ordering::Relaxed);
             }
-            redraw.store(true, Ordering::SeqCst);
+            redraw.store(true, Ordering::Relaxed);
         }));
     }
 
@@ -129,7 +129,7 @@ async fn main() -> Result<(), io::Error> {
         let skipped = page * per_page;
         line -= skipped;
 
-        if redraw.swap(false, Ordering::SeqCst) {
+        if redraw.swap(false, Ordering::Relaxed) {
             let shown_len_str_len = (shown_len() + 1).ilog10() as usize + 1;
 
             let formatted_shown = all_packages
@@ -168,7 +168,7 @@ async fn main() -> Result<(), io::Error> {
                     )
                     .await;
                     *info.lock() = newinfo;
-                    redraw.store(true, Ordering::SeqCst);
+                    redraw.store(true, Ordering::Relaxed);
                 }))
             }
 
@@ -176,7 +176,7 @@ async fn main() -> Result<(), io::Error> {
                 let search_color;
                 let shown_color;
                 let bold_search_style;
-                if matches!(mode.load(Ordering::SeqCst), Mode::Insert) {
+                if matches!(mode.load(Ordering::Relaxed), Mode::Insert) {
                     search_color = Color::White;
                     shown_color = Color::Gray;
                     bold_search_style = Style::default()
@@ -244,7 +244,7 @@ async fn main() -> Result<(), io::Error> {
                         width: size.width / 2,
                         height: 4,
                     };
-                    let no_shown = Paragraph::new(error_msg.load(Ordering::SeqCst).as_str())
+                    let no_shown = Paragraph::new(error_msg.load(Ordering::Relaxed).as_str())
                         .block(
                             Block::default()
                                 .title(Span::styled(
@@ -333,7 +333,7 @@ async fn main() -> Result<(), io::Error> {
                 }
             })?;
 
-            match mode.load(Ordering::SeqCst) {
+            match mode.load(Ordering::Relaxed) {
                 Mode::Insert => {
                     terminal.set_cursor((insert_pos + 10).min(size.width.saturating_sub(3)), 1)?;
                     terminal.show_cursor()?;
@@ -353,18 +353,18 @@ async fn main() -> Result<(), io::Error> {
 
         let Event::Key(k) = e else {
             if matches!(e, Event::Resize(..)) {
-                redraw.store(true, Ordering::SeqCst);
+                redraw.store(true, Ordering::Relaxed);
             };
             continue;
         };
 
-        match mode.load(Ordering::SeqCst) {
+        match mode.load(Ordering::Relaxed) {
             Mode::Insert => match k.code {
                 KeyCode::Esc => {
                     if !(*shown).load().is_empty() {
                         current = 0;
-                        redraw.store(true, Ordering::SeqCst);
-                        mode.store(Mode::Select, Ordering::SeqCst);
+                        redraw.store(true, Ordering::Relaxed);
+                        mode.store(Mode::Select, Ordering::Relaxed);
                     }
                 }
                 KeyCode::Left => {
@@ -376,7 +376,7 @@ async fn main() -> Result<(), io::Error> {
                     } else {
                         insert_pos = query.len() as u16;
                     }
-                    redraw.store(true, Ordering::SeqCst);
+                    redraw.store(true, Ordering::Relaxed);
                 }
                 KeyCode::Right => {
                     if k.modifiers.contains(KeyModifiers::CONTROL) {
@@ -387,21 +387,21 @@ async fn main() -> Result<(), io::Error> {
                     } else {
                         insert_pos = 0;
                     }
-                    redraw.store(true, Ordering::SeqCst);
+                    redraw.store(true, Ordering::Relaxed);
                 }
                 KeyCode::Up | KeyCode::Home => {
                     insert_pos = 0;
-                    redraw.store(true, Ordering::SeqCst);
+                    redraw.store(true, Ordering::Relaxed);
                 }
                 KeyCode::Down | KeyCode::End => {
                     insert_pos = query.len() as u16;
-                    redraw.store(true, Ordering::SeqCst);
+                    redraw.store(true, Ordering::Relaxed);
                 }
                 KeyCode::Backspace => {
                     if insert_pos != 0 {
                         query.remove(insert_pos as usize - 1);
                         insert_pos -= 1;
-                        redraw.store(true, Ordering::SeqCst);
+                        redraw.store(true, Ordering::Relaxed);
                     }
                 }
                 KeyCode::Char(c) => match c {
@@ -419,18 +419,18 @@ async fn main() -> Result<(), io::Error> {
                         let boundary = last_word_end(query.as_bytes(), insert_pos);
                         query = query[..boundary].to_string() + &query[insert_pos as usize..];
                         insert_pos = boundary as u16;
-                        redraw.store(true, Ordering::SeqCst);
+                        redraw.store(true, Ordering::Relaxed);
                     }
                     _ => {
                         query.insert(insert_pos as usize, c);
                         insert_pos += 1;
-                        redraw.store(true, Ordering::SeqCst);
+                        redraw.store(true, Ordering::Relaxed);
                     }
                 },
                 KeyCode::Enter => {
                     info.lock().clear();
                     current = 0;
-                    redraw.store(true, Ordering::SeqCst);
+                    redraw.store(true, Ordering::Relaxed);
                     shown.store(Shown::Few(Vec::new()).into());
                     let mode = mode.clone();
                     let shown = shown.clone();
@@ -443,7 +443,7 @@ async fn main() -> Result<(), io::Error> {
                         search_thread.abort();
                     }
                     _search_task = Some(tokio::spawn(async move {
-                        error_msg.store(Message::Searching, Ordering::SeqCst);
+                        error_msg.store(Message::Searching, Ordering::Relaxed);
 
                         if all_packages.get().is_none() {
                             let result = list().await;
@@ -458,21 +458,21 @@ async fn main() -> Result<(), io::Error> {
                         shown.store(search(&query, all_packages.get().unwrap()).into());
 
                         if !(*shown).load().is_empty() {
-                            mode.store(Mode::Select, Ordering::SeqCst);
+                            mode.store(Mode::Select, Ordering::Relaxed);
                         } else {
-                            error_msg.store(Message::NoResults, Ordering::SeqCst);
+                            error_msg.store(Message::NoResults, Ordering::Relaxed);
                         }
-                        redraw.store(true, Ordering::SeqCst);
+                        redraw.store(true, Ordering::Relaxed);
                     }));
                 }
-                _ => redraw.store(true, Ordering::SeqCst),
+                _ => redraw.store(true, Ordering::Relaxed),
             },
             Mode::Select => match k.code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     if k.modifiers == KeyModifiers::CONTROL {
                         if info_scroll > 0 {
                             info_scroll -= 1;
-                            redraw.store(true, Ordering::SeqCst);
+                            redraw.store(true, Ordering::Relaxed);
                         }
                     } else {
                         if current > 0 {
@@ -481,14 +481,14 @@ async fn main() -> Result<(), io::Error> {
                             current = shown_len() - 1;
                         }
                         info.lock().clear();
-                        redraw.store(true, Ordering::SeqCst);
+                        redraw.store(true, Ordering::Relaxed);
                     }
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
                     if k.modifiers == KeyModifiers::CONTROL {
                         if !info.lock().is_empty() {
                             info_scroll += 1;
-                            redraw.store(true, Ordering::SeqCst);
+                            redraw.store(true, Ordering::Relaxed);
                         }
                     } else {
                         let result_count = shown_len();
@@ -499,13 +499,13 @@ async fn main() -> Result<(), io::Error> {
                             current = 0;
                         }
                         info.lock().clear();
-                        redraw.store(true, Ordering::SeqCst);
+                        redraw.store(true, Ordering::Relaxed);
                     }
                 }
                 KeyCode::Esc => {
                     insert_pos = query.len() as u16;
-                    redraw.store(true, Ordering::SeqCst);
-                    mode.store(Mode::Insert, Ordering::SeqCst);
+                    redraw.store(true, Ordering::Relaxed);
+                    mode.store(Mode::Insert, Ordering::Relaxed);
                 }
                 KeyCode::Left | KeyCode::PageUp | KeyCode::Char('h') => {
                     let result_count = shown_len() - 1;
@@ -518,7 +518,7 @@ async fn main() -> Result<(), io::Error> {
                             current = current / per_page * per_page;
                         }
                         info.lock().clear();
-                        redraw.store(true, Ordering::SeqCst);
+                        redraw.store(true, Ordering::Relaxed);
                     }
                 }
                 KeyCode::Right | KeyCode::PageDown | KeyCode::Char('l') => {
@@ -533,18 +533,18 @@ async fn main() -> Result<(), io::Error> {
                             current += per_page;
                         }
                         info.lock().clear();
-                        redraw.store(true, Ordering::SeqCst);
+                        redraw.store(true, Ordering::Relaxed);
                     }
                 }
                 KeyCode::Home | KeyCode::Char('g') if current != 0 => {
                     info.lock().clear();
                     current = 0;
-                    redraw.store(true, Ordering::SeqCst);
+                    redraw.store(true, Ordering::Relaxed);
                 }
                 KeyCode::End | KeyCode::Char('G') if current != shown_len() - 1 => {
                     info.lock().clear();
                     current = shown_len() - 1;
-                    redraw.store(true, Ordering::SeqCst);
+                    redraw.store(true, Ordering::Relaxed);
                 }
                 KeyCode::Char(c) => match c {
                     ' ' => {
@@ -554,12 +554,12 @@ async fn main() -> Result<(), io::Error> {
                         } else {
                             selected.insert(real_current);
                         }
-                        redraw.store(true, Ordering::SeqCst);
+                        redraw.store(true, Ordering::Relaxed);
                     }
                     'i' | '/' => {
                         insert_pos = query.len() as u16;
-                        redraw.store(true, Ordering::SeqCst);
-                        mode.store(Mode::Insert, Ordering::SeqCst);
+                        redraw.store(true, Ordering::Relaxed);
+                        mode.store(Mode::Insert, Ordering::Relaxed);
                     }
                     'q' => {
                         disable_raw_mode()?;
@@ -612,7 +612,7 @@ async fn main() -> Result<(), io::Error> {
                         return Ok(());
                     }
 
-                    _ => redraw.store(true, Ordering::SeqCst),
+                    _ => redraw.store(true, Ordering::Relaxed),
                 },
                 KeyCode::Enter => {
                     disable_raw_mode()?;
@@ -637,7 +637,7 @@ async fn main() -> Result<(), io::Error> {
 
                     return Ok(());
                 }
-                _ => redraw.store(true, Ordering::SeqCst),
+                _ => redraw.store(true, Ordering::Relaxed),
             },
         }
     }
